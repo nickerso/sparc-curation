@@ -55,11 +55,80 @@ def process_nodes(j, direction, verbose):
     return nodes, objects, subjects, edgerep, root, roots, leaves, pair_rel
 
 
-def print_node(indent, node, objects, nodes):
+def print_node(indent, node, objects, nodes, pair_rel):
     for o in objects[node]:
-        print(indent + '|--' + ((nodes[o] + " (" + o + ")" ) if nodes[o] else o))
+        predicate = pair_rel[(node, o)]
+        print(indent + '|--' + predicate + ((nodes[o] + " (" + o + ")" ) if nodes[o] else o))
         next_level = indent + '|   '
-        print_node(next_level, o, objects, nodes)
+        print_node(next_level, o, objects, nodes, pair_rel)
+
+def find_object(subject, predicate, objects, pair_rel):
+    for o in objects[subject]:
+        if pair_rel[(subject, o)] == predicate:
+            return o
+    return ''
+
+def get_primary_name(id, nodes, objects, pair_rel):
+    # default name is the label if one is provided, otherwise the raw id is used
+    name = nodes[id] if nodes[id] else id
+    # if an external identifier is defined, that should be preferred
+    external_id = find_object(id, 'apinatomy:external>', objects, pair_rel)
+    if external_id:
+        name = external_id + "(" + name + ")"
+    return name
+
+def trace_route_part(indent, part, nodes, objects, pair_rel):
+    # is there a flatmap "node" for this part?
+    node = find_object(part, 'apinatomy:fasciculatesIn>', objects, pair_rel)
+    if node:
+        # layered type or direct?
+        layer = find_object(node, 'apinatomy:layerIn>', objects, pair_rel)
+        if layer:
+            clone = find_object(node, 'apinatomy:cloneOf>', objects, pair_rel)
+            supertype = find_object(clone, 'apinatomy:supertype>', objects, pair_rel)
+            print('{} {} [in layer: {}]'.format(
+                indent,
+                get_primary_name(supertype, nodes, objects, pair_rel),
+                get_primary_name(layer, nodes, objects, pair_rel)
+            ))
+        else:
+            print('{} {}'.format(
+                indent,
+                get_primary_name(node, nodes, objects, pair_rel)
+            ))
+    # are the more parts in this route?
+    next_part = find_object(part, 'apinatomy:next>', objects, pair_rel)
+    if next_part:
+        new_indent = '  ' + indent
+        trace_route_part(new_indent, next_part, nodes, objects, pair_rel)
+    else:
+        # not sure what this bit is?
+        next_part = find_object(part, 'apinatomy:nextChainStartLevels>', objects, pair_rel)
+        if next_part:
+            new_indent = '  ' + indent
+            trace_route_part(new_indent, next_part, nodes, objects, pair_rel)
+    return
+
+def trace_route(neuron, nodes, objects, pair_rel):
+    print("Neuron: {} ({})".format(nodes[neuron], neuron))
+    conveys = find_object(neuron, 'apinatomy:conveys>', objects, pair_rel)
+    if conveys == '':
+        return
+    target = find_object(conveys, 'apinatomy:target>', objects, pair_rel)
+    target_root = find_object(target, 'apinatomy:rootOf>', objects, pair_rel)
+    source = find_object(conveys, 'apinatomy:source>', objects, pair_rel)
+    source_root = find_object(source, 'apinatomy:rootOf>', objects, pair_rel)
+    print("  Conveys {} ==> {}".format(
+        get_primary_name(source_root, nodes, objects, pair_rel),
+        get_primary_name(target_root, nodes, objects, pair_rel)
+    ))
+    print("  Target: " + get_primary_name(target_root, nodes, objects, pair_rel))
+    part = find_object(target, 'apinatomy:sourceOf>', objects, pair_rel)
+    trace_route_part('    -->', part, nodes, objects, pair_rel)
+    print("  Source: " + get_primary_name(source_root, nodes, objects, pair_rel))
+    part = find_object(source, 'apinatomy:sourceOf>', objects, pair_rel)
+    trace_route_part('    -->', part, nodes, objects, pair_rel)
+
 
 def main(soma_processes_file=None, verbose=False):
 
@@ -89,7 +158,7 @@ def main(soma_processes_file=None, verbose=False):
         print('filter has part, number of nodes: ' + str(len(j['nodes'])))
         print('filter has part, number of edges: ' + str(len(j['edges'])))
 
-    direction = 'INCOMING'
+    direction = 'OUTGOING'
     (nodes, objects, subjects, edgerep, root, roots, leaves, pair_rel) = process_nodes(j, direction, verbose)
 
     if verbose:
@@ -99,16 +168,31 @@ def main(soma_processes_file=None, verbose=False):
         print('nodes, root: ' + str(root))
         print('nodes, number of roots: ' + str(len(roots)))
         print('nodes, number of pair_rel: ' + str(len(pair_rel)))
+        print('edgerep, number of edgereps: ' + str(len(edgerep)))
 
-    print("UBERON:0000407")  # sympathetic trunk
-    print_node('', 'UBERON:0000407', objects, nodes)
+    # print("UBERON:0000407")  # sympathetic trunk
+    # print_node('', 'UBERON:0000407', objects, nodes)
+    #
+    # print("FMA:7643")# Anterior root of first thoracic nerve
+    # print_node('', 'FMA:7643', objects, nodes)
+    #
+    # print("UBERON:0000057") # urethra
+    # print_node('', 'UBERON:0000057', objects, nodes)
 
-    print("FMA:7643")# Anterior root of first thoracic nerve
-    print_node('', 'FMA:7643', objects, nodes)
+    # print("UBERON:0016508") # pelvic ganglia
+    # print_node('', 'UBERON:0016508', objects, nodes, pair_rel)
 
-    print("UBERON:0000057") # urethra
-    print_node('', 'UBERON:0000057', objects, nodes)
+    print("NLX:154731"  # soma
+        + " ==> https://apinatomy.org/uris/models/keast-bladder/ids/snl26")
+    print_node('', 'https://apinatomy.org/uris/models/keast-bladder/ids/snl26', objects, nodes, pair_rel)
 
+    # root node will be soma (NLX:154731)
+    print("Soma routes:")
+    for neuron in objects[root]:
+        if neuron == 'https://apinatomy.org/uris/models/keast-bladder/ids/snl26':
+            trace_route(neuron, nodes, objects, pair_rel)
+        if neuron == 'https://apinatomy.org/uris/models/keast-bladder/ids/snl16':
+            trace_route(neuron, nodes, objects, pair_rel)
 
 if __name__ == '__main__':
     import argparse
