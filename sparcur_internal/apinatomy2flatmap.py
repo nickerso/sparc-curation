@@ -1,5 +1,6 @@
 import json
 from collections import defaultdict as base_dd
+import networkx as nx
 
 
 class defaultdict(base_dd):
@@ -68,48 +69,76 @@ def find_object(subject, predicate, objects, pair_rel):
             return o
     return ''
 
-def get_primary_name(id, nodes, objects, pair_rel):
+def get_primary_info(id, nodes, objects, pair_rel):
     # default name is the label if one is provided, otherwise the raw id is used
     name = nodes[id] if nodes[id] else id
     # if an external identifier is defined, that should be preferred
     external_id = find_object(id, 'apinatomy:external>', objects, pair_rel)
+    return external_id, name
+
+def get_primary_name(id, nodes, objects, pair_rel):
+    external_id, name = get_primary_info(id, nodes, objects, pair_rel)
     if external_id:
         name = external_id + "(" + name + ")"
     return name
 
-def trace_route_part(indent, part, nodes, objects, pair_rel):
+def get_flatmap_node(node, nodes, objects, pair_rel):
+    flatmap_node = {
+        'id': node,
+    }
+    # layered type or direct?
+    layer = find_object(node, 'apinatomy:layerIn>', objects, pair_rel)
+    if layer:
+        clone = find_object(node, 'apinatomy:cloneOf>', objects, pair_rel)
+        supertype = find_object(clone, 'apinatomy:supertype>', objects, pair_rel)
+        external_id, name = get_primary_info(supertype, nodes, objects, pair_rel)
+        # the external (ontology) ID for this node
+        flatmap_node['external_id'] = external_id
+        # the (potentially) human readable name for this node
+        flatmap_node['name'] = name
+
+        # the containing layer?
+        external_id, name = get_primary_info(layer, nodes, objects, pair_rel)
+        flatmap_node['layer_in'] = {
+            'id': layer,
+            'external_id': external_id,
+            'name': name
+        }
+    else:
+        external_id, name = get_primary_info(node, nodes, objects, pair_rel)
+        # the external (ontology) ID for this node
+        flatmap_node['external_id'] = external_id
+        # the (potentially) human readable name for this node
+        flatmap_node['name'] = name
+    return flatmap_node
+
+def trace_route_part(indent, part, nodes, objects, pair_rel, graph):
     # is there a flatmap "node" for this part?
     node = find_object(part, 'apinatomy:fasciculatesIn>', objects, pair_rel)
     if node:
-        # layered type or direct?
-        layer = find_object(node, 'apinatomy:layerIn>', objects, pair_rel)
-        if layer:
-            clone = find_object(node, 'apinatomy:cloneOf>', objects, pair_rel)
-            supertype = find_object(clone, 'apinatomy:supertype>', objects, pair_rel)
-            print('{} {} [in layer: {}]'.format(
-                indent,
-                get_primary_name(supertype, nodes, objects, pair_rel),
-                get_primary_name(layer, nodes, objects, pair_rel)
-            ))
-        else:
-            print('{} {}'.format(
-                indent,
-                get_primary_name(node, nodes, objects, pair_rel)
-            ))
+        flatmap_node = get_flatmap_node(node, nodes, objects, pair_rel)
+        s = flatmap_node['external_id'] + "(" + flatmap_node['name'] + ")"
+        if 'layer_in' in flatmap_node:
+            l = flatmap_node['layer_in']
+            s = s + " [in layer: " + l['external_id'] + "(" + l['name'] + ")"
+        print('{} {}'.format(indent, s))
+        graph.add_node(node, **flatmap_node)
     # are the more parts in this route?
     next_part = find_object(part, 'apinatomy:next>', objects, pair_rel)
     if next_part:
         new_indent = '  ' + indent
-        trace_route_part(new_indent, next_part, nodes, objects, pair_rel)
+        np = trace_route_part(new_indent, next_part, nodes, objects, pair_rel, graph)
+        graph.add_edge(node, np)
     else:
-        # not sure what this bit is?
+        # if the chain merges into another chain?
         next_part = find_object(part, 'apinatomy:nextChainStartLevels>', objects, pair_rel)
         if next_part:
             new_indent = '  ' + indent
-            trace_route_part(new_indent, next_part, nodes, objects, pair_rel)
-    return
+            np = trace_route_part(new_indent, next_part, nodes, objects, pair_rel, graph)
+            graph.add_edge(node, np)
+    return node
 
-def trace_route(neuron, nodes, objects, pair_rel):
+def trace_route(neuron, nodes, objects, pair_rel, graph):
     print("Neuron: {} ({})".format(nodes[neuron], neuron))
     conveys = find_object(neuron, 'apinatomy:conveys>', objects, pair_rel)
     if conveys == '':
@@ -124,10 +153,10 @@ def trace_route(neuron, nodes, objects, pair_rel):
     ))
     print("  Target: " + get_primary_name(target_root, nodes, objects, pair_rel))
     part = find_object(target, 'apinatomy:sourceOf>', objects, pair_rel)
-    trace_route_part('    -->', part, nodes, objects, pair_rel)
+    trace_route_part('    -->', part, nodes, objects, pair_rel, graph)
     print("  Source: " + get_primary_name(source_root, nodes, objects, pair_rel))
     part = find_object(source, 'apinatomy:sourceOf>', objects, pair_rel)
-    trace_route_part('    -->', part, nodes, objects, pair_rel)
+    trace_route_part('    -->', part, nodes, objects, pair_rel, graph)
 
 
 def main(soma_processes_file=None, verbose=False):
@@ -185,14 +214,168 @@ def main(soma_processes_file=None, verbose=False):
     print("NLX:154731"  # soma
         + " ==> https://apinatomy.org/uris/models/keast-bladder/ids/snl26")
     print_node('', 'https://apinatomy.org/uris/models/keast-bladder/ids/snl26', objects, nodes, pair_rel)
+    print_node('', 'https://apinatomy.org/uris/models/keast-bladder/ids/snl16', objects, nodes, pair_rel)
 
     # root node will be soma (NLX:154731)
+    graph = nx.DiGraph()
     print("Soma routes:")
     for neuron in objects[root]:
         if neuron == 'https://apinatomy.org/uris/models/keast-bladder/ids/snl26':
-            trace_route(neuron, nodes, objects, pair_rel)
+            trace_route(neuron, nodes, objects, pair_rel, graph)
         if neuron == 'https://apinatomy.org/uris/models/keast-bladder/ids/snl16':
-            trace_route(neuron, nodes, objects, pair_rel)
+            trace_route(neuron, nodes, objects, pair_rel, graph)
+
+    import plotly.graph_objects as go
+    from addEdge import addEdge
+
+    # Controls for how the graph is drawn
+    nodeColor = 'Blue'
+    nodeSize = 20
+    lineWidth = 2
+    lineColor = '#000000'
+
+    # define the layout of the graph
+    pos = nx.spring_layout(graph)
+    for node in graph.nodes:
+        graph.nodes[node]['pos'] = list(pos[node])
+
+    # Make list of nodes for plotly
+    node_x = []
+    node_y = []
+    node_labels = []
+    node_text = []
+    for node in graph.nodes():
+        x, y = graph.nodes[node]['pos']
+        node_x.append(x)
+        node_y.append(y)
+        # build the label for the node
+        n = graph.nodes[node]
+        label = \
+            "<i>" + node + "</i><br />" + \
+            n['external_id'] + "<i>" + n['name'] + "</i>"
+        if 'layer_in' in n:
+            l = n['layer_in']
+            label = label + "<br />[[in layer: " + l['external_id'] + "(<i>" + l['name'] + "</i>)]]"
+        node_labels.append(label)
+        node_text.append(n['external_id'])
+
+    # Make a list of edges for plotly, including line segments that result in arrowheads
+    edge_x = []
+    edge_y = []
+    for edge in graph.edges():
+        # addEdge(start, end, edge_x, edge_y, lengthFrac=1, arrowPos = None, arrowLength=0.025, arrowAngle = 30, dotSize=20)
+        start = graph.nodes[edge[0]]['pos']
+        end = graph.nodes[edge[1]]['pos']
+        edge_x, edge_y = addEdge(start, end, edge_x, edge_y, .9, 'end', .04, 30, nodeSize)
+
+    edge_trace = go.Scatter(x=edge_x, y=edge_y, line=dict(width=lineWidth, color=lineColor), hoverinfo='none',
+                            mode='lines')
+
+    node_trace = go.Scatter(x=node_x, y=node_y, mode='text', hoverinfo='text',
+                            marker=dict(showscale=False, color=nodeColor, size=nodeSize))
+    node_trace.hovertext = node_labels
+    node_trace.text = node_text
+
+    fig = go.Figure(data=[edge_trace, node_trace],
+                    layout=go.Layout(
+                        showlegend=False,
+                        hovermode='closest',
+                        margin=dict(b=20, l=5, r=5, t=40),
+                        xaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
+                        yaxis=dict(showgrid=False, zeroline=False, showticklabels=False))
+                    )
+
+    # Note: if you don't use fixed ratio axes, the arrows won't be symmetrical
+    fig.update_layout(yaxis=dict(scaleanchor="x", scaleratio=1), plot_bgcolor='rgb(255,255,255)')
+    fig.show()
+    # app = dash.Dash()
+    # app.layout = html.Div([dcc.Graph(figure=fig)])
+    #
+    # app.run_server(debug=True, use_reloader=False)
+
+    # edge_x = []
+    # edge_y = []
+    # for edge in graph.edges():
+    #     x0, y0 = pos[edge[0]]
+    #     x1, y1 = pos[edge[1]]
+    #     edge_x.append(x0)
+    #     edge_x.append(x1)
+    #     edge_x.append(None)
+    #     edge_y.append(y0)
+    #     edge_y.append(y1)
+    #     edge_y.append(None)
+    #
+    # edge_trace = go.Scatter(
+    #     x=edge_x, y=edge_y,
+    #     line=dict(width=0.5, color='#888'),
+    #     hoverinfo='none',
+    #     mode='lines')
+    #
+    # node_x = []
+    # node_y = []
+    # node_text = []
+    # for node in graph.nodes():
+    #     x, y = pos[node]
+    #     node_x.append(x)
+    #     node_y.append(y)
+    #     # build the label for the node
+    #     n = graph.nodes[node]
+    #     label = \
+    #         "<i>" + node + "</i><br />" + \
+    #         n['external_id'] + "<i>" + n['name'] + "</i>"
+    #     if 'layer_in' in n:
+    #         l = n['layer_in']
+    #         label = label + "<br />[[in layer: " + l['external_id'] + "(<i>" + l['name'] + "</i>)]]"
+    #     node_text.append(label)
+    #
+    # node_trace = go.Scatter(
+    #     x=node_x, y=node_y,
+    #     mode='markers',
+    #     hoverinfo='text',
+    #     marker=dict(
+    #         showscale=False,
+    #         # colorscale options
+    #         #'Greys' | 'YlGnBu' | 'Greens' | 'YlOrRd' | 'Bluered' | 'RdBu' |
+    #         #'Reds' | 'Blues' | 'Picnic' | 'Rainbow' | 'Portland' | 'Jet' |
+    #         #'Hot' | 'Blackbody' | 'Earth' | 'Electric' | 'Viridis' |
+    #         colorscale='YlGnBu',
+    #         reversescale=True,
+    #         color=[],
+    #         size=10,
+    #         colorbar=dict(
+    #             thickness=15,
+    #             title='Node Connections',
+    #             xanchor='left',
+    #             titleside='right'
+    #         ),
+    #         line_width=2))
+    #
+    # node_adjacencies = []
+    # #node_text = []
+    # for node, adjacencies in enumerate(graph.adjacency()):
+    #     node_adjacencies.append(len(adjacencies[1]))
+    #     #node_text.append('# of connections: '+str(len(adjacencies[1])))
+    #
+    # node_trace.marker.color = node_adjacencies
+    # node_trace.text = node_text
+    #
+    # fig = go.Figure(data=[edge_trace, node_trace],
+    #              layout=go.Layout(
+    #                 title='<br>Network graph made with Python',
+    #                 titlefont_size=16,
+    #                 showlegend=False,
+    #                 hovermode='closest',
+    #                 margin=dict(b=20,l=5,r=5,t=40),
+    #                 annotations=[
+    #                     dict(
+    #                         ax=x0[i], ay=y0[i], axref='x', ayref='y',
+    #                         x=x1[i], y=y1[i], xref='x', yref='y',
+    #                         showarrow=True, arrowhead=1 ) for i in range(0, len(x0))
+    #                 ],
+    #                 xaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
+    #                 yaxis=dict(showgrid=False, zeroline=False, showticklabels=False))
+    #                 )
+    # fig.show()
 
 if __name__ == '__main__':
     import argparse
