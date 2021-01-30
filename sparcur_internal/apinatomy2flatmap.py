@@ -70,10 +70,14 @@ def find_object(subject, predicate, objects, pair_rel):
     return ''
 
 def get_primary_info(id, nodes, objects, pair_rel):
-    # default name is the label if one is provided, otherwise the raw id is used
-    name = nodes[id] if nodes[id] else id
-    # if an external identifier is defined, that should be preferred
-    external_id = find_object(id, 'apinatomy:external>', objects, pair_rel)
+    if id:
+        # default name is the label if one is provided, otherwise the raw id is used
+        name = nodes[id] if nodes[id] else id
+        # if an external identifier is defined, that should be preferred
+        external_id = find_object(id, 'apinatomy:external>', objects, pair_rel)
+    else:
+        name = "UNKOWN"
+        external_id = "REALLY_UNKNOWN"
     return external_id, name
 
 def get_primary_name(id, nodes, objects, pair_rel):
@@ -211,21 +215,47 @@ def main(soma_processes_file=None, verbose=False):
     # print("UBERON:0016508") # pelvic ganglia
     # print_node('', 'UBERON:0016508', objects, nodes, pair_rel)
 
-    print("NLX:154731"  # soma
-        + " ==> https://apinatomy.org/uris/models/keast-bladder/ids/snl26")
-    print_node('', 'https://apinatomy.org/uris/models/keast-bladder/ids/snl26', objects, nodes, pair_rel)
-    print_node('', 'https://apinatomy.org/uris/models/keast-bladder/ids/snl16', objects, nodes, pair_rel)
+    neuron6_neuron2 = True
+    neuron7_neuron3 = False
+
+    if neuron6_neuron2:
+        print("NLX:154731"  # soma
+            + " ==> https://apinatomy.org/uris/models/keast-bladder/ids/snl26")
+        print_node('', 'https://apinatomy.org/uris/models/keast-bladder/ids/snl26', objects, nodes, pair_rel)
+        print_node('', 'https://apinatomy.org/uris/models/keast-bladder/ids/snl16', objects, nodes, pair_rel)
+        print_node('', 'https://apinatomy.org/uris/models/keast-bladder/ids/sn-pg_2', objects, nodes, pair_rel)
+
+    if neuron7_neuron3:
+        print("NLX:154731"  # soma
+            + " ==> https://apinatomy.org/uris/models/keast-bladder/ids/snl17")
+        print_node('', 'https://apinatomy.org/uris/models/keast-bladder/ids/snl17', objects, nodes, pair_rel)
+        print_node('', 'https://apinatomy.org/uris/models/keast-bladder/ids/snl27', objects, nodes, pair_rel)
+        print_node('', 'https://apinatomy.org/uris/models/keast-bladder/ids/sn-img_3', objects, nodes, pair_rel)
 
     # root node will be soma (NLX:154731)
     graph = nx.DiGraph()
     print("Soma routes:")
+    # eventually we would do all soma's
     for neuron in objects[root]:
-        if neuron == 'https://apinatomy.org/uris/models/keast-bladder/ids/snl26':
-            trace_route(neuron, nodes, objects, pair_rel, graph)
-        if neuron == 'https://apinatomy.org/uris/models/keast-bladder/ids/snl16':
-            trace_route(neuron, nodes, objects, pair_rel, graph)
+        if neuron6_neuron2:
+            if neuron == 'https://apinatomy.org/uris/models/keast-bladder/ids/snl26':
+                trace_route(neuron, nodes, objects, pair_rel, graph)
+            if neuron == 'https://apinatomy.org/uris/models/keast-bladder/ids/snl16':
+                trace_route(neuron, nodes, objects, pair_rel, graph)
+            if neuron == 'https://apinatomy.org/uris/models/keast-bladder/ids/sn-pg_2':
+                trace_route(neuron, nodes, objects, pair_rel, graph)
+        if neuron7_neuron3:
+            if neuron == 'https://apinatomy.org/uris/models/keast-bladder/ids/snl17':
+                trace_route(neuron, nodes, objects, pair_rel, graph)
+            if neuron == 'https://apinatomy.org/uris/models/keast-bladder/ids/snl27':
+                trace_route(neuron, nodes, objects, pair_rel, graph)
+            if neuron == 'https://apinatomy.org/uris/models/keast-bladder/ids/sn-img_3':
+                trace_route(neuron, nodes, objects, pair_rel, graph)
 
     import plotly.graph_objects as go
+    import dash
+    import dash_core_components as dcc
+    import dash_html_components as html
     from addEdge import addEdge
 
     # Controls for how the graph is drawn
@@ -235,7 +265,9 @@ def main(soma_processes_file=None, verbose=False):
     lineColor = '#000000'
 
     # define the layout of the graph
-    pos = nx.spring_layout(graph)
+    #pos = nx.spring_layout(graph)
+    #pos = nx.planar_layout(graph, scale=2)
+    pos = nx.kamada_kawai_layout(graph)
     for node in graph.nodes:
         graph.nodes[node]['pos'] = list(pos[node])
 
@@ -287,11 +319,10 @@ def main(soma_processes_file=None, verbose=False):
 
     # Note: if you don't use fixed ratio axes, the arrows won't be symmetrical
     fig.update_layout(yaxis=dict(scaleanchor="x", scaleratio=1), plot_bgcolor='rgb(255,255,255)')
-    fig.show()
-    # app = dash.Dash()
-    # app.layout = html.Div([dcc.Graph(figure=fig)])
-    #
-    # app.run_server(debug=True, use_reloader=False)
+    app = dash.Dash()
+    app.layout = html.Div([dcc.Graph(figure=fig)])
+
+    app.run_server(debug=True, use_reloader=False)
 
     # edge_x = []
     # edge_y = []
